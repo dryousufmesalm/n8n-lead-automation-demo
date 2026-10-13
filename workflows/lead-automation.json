@@ -1,0 +1,355 @@
+{
+  "name": "Lead Automation Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111101",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "lead-automation-demo-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "name",
+              "value": "={{ $json.body?.name ?? $json.name ?? 'Unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "email",
+              "value": "={{ $json.body?.email ?? $json.email ?? 'lead@example.com' }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "company",
+              "value": "={{ $json.body?.company ?? $json.company ?? 'Acme Co' }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "budget_usd",
+              "value": "={{ Number($json.body?.budget_usd ?? $json.budget_usd ?? 0) }}",
+              "type": "number"
+            },
+            {
+              "id": "f5",
+              "name": "phone",
+              "value": "={{ $json.body?.phone ?? $json.phone ?? '+10000000000' }}",
+              "type": "string"
+            },
+            {
+              "id": "f6",
+              "name": "source",
+              "value": "={{ $json.body?.source ?? $json.source ?? 'web' }}",
+              "type": "string"
+            },
+            {
+              "id": "f7",
+              "name": "force_tier",
+              "value": "={{ $json.body?.force_tier ?? $json.force_tier ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f8",
+              "name": "simulate_openai_failure",
+              "value": "={{ $json.body?.simulate_openai_failure ?? $json.simulate_openai_failure ?? false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111102",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'Return JSON with score, tier, summary, reasons.' }, { role: 'user', content: JSON.stringify({ name: $json.name, email: $json.email, company: $json.company, budget_usd: $json.budget_usd, source: $json.source, force_tier: $json.force_tier }) }], lead: { name: $json.name, email: $json.email, company: $json.company, budget_usd: $json.budget_usd, source: $json.source, force_tier: $json.force_tier }, simulate_openai_failure: $json.simulate_openai_failure }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111103",
+      "name": "AI Qualify (OpenAI mock)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst lead = $('Normalize Lead').first().json;\nlet parsed;\ntry {\n  const content = item.json.choices?.[0]?.message?.content;\n  parsed = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  parsed = { score: 50, tier: 'warm', summary: 'Parse fallback', reasons: [String(e)] };\n}\nreturn [{\n  json: {\n    ...lead,\n    score: parsed.score,\n    tier: parsed.tier,\n    qualification_summary: parsed.summary,\n    qualification_reasons: parsed.reasons,\n    qualification_source: 'openai-mock'\n  }\n}];"
+      },
+      "id": "a1111111-1111-1111-1111-111111111104",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/qualify/fallback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Normalize Lead').item.json.name, email: $('Normalize Lead').item.json.email, company: $('Normalize Lead').item.json.company, budget_usd: $('Normalize Lead').item.json.budget_usd, source: $('Normalize Lead').item.json.source, force_tier: $('Normalize Lead').item.json.force_tier }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111105",
+      "name": "AI Qualify Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Normalize Lead').first().json;\nconst fb = $input.first().json;\nreturn [{\n  json: {\n    ...lead,\n    score: fb.score,\n    tier: fb.tier,\n    qualification_summary: fb.summary,\n    qualification_reasons: fb.reasons,\n    qualification_source: fb.model || 'rules-fallback'\n  }\n}];"
+      },
+      "id": "a1111111-1111-1111-1111-111111111106",
+      "name": "Map Fallback Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/crm/upsert",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, email: $json.email, company: $json.company, budget_usd: $json.budget_usd, phone: $json.phone, tier: $json.tier, score: $json.score, source: $json.source }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111108",
+      "name": "CRM Upsert (HubSpot mock)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crm = $input.first().json;\nconst lead = crm.lead || {};\nreturn [{ json: { ...lead, crm_id: crm.id, crm_provider: crm.provider } }];"
+      },
+      "id": "a1111111-1111-1111-1111-111111111109",
+      "name": "Attach CRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/sheets/append",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ timestamp: new Date().toISOString(), name: $json.name, email: $json.email, company: $json.company, budget_usd: $json.budget_usd, tier: $json.tier, score: $json.score, crm_id: $json.crm_id }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111110",
+      "name": "Google Sheets Append (mock)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Attach CRM').item.json.tier }}",
+                    "rightValue": "hot",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hot"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Attach CRM').item.json.tier }}",
+                    "rightValue": "warm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "warm"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "a1111111-1111-1111-1111-111111111111",
+      "name": "Route by Tier",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1920, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $('Attach CRM').item.json.phone, message: `🔥 Hot lead: ${$('Attach CRM').item.json.name} (${$('Attach CRM').item.json.company}) — score ${$('Attach CRM').item.json.score}. Budget $${$('Attach CRM').item.json.budget_usd}.` }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111112",
+      "name": "WhatsApp Alert (mock)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/email/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $('Attach CRM').item.json.email, subject: 'Thanks for reaching out', body: `Hi ${$('Attach CRM').item.json.name}, we received your inquiry and will follow up shortly.` }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111113",
+      "name": "Email Follow-up (mock)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "status",
+              "value": "archived_cold",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111114",
+      "name": "Cold Lead Log",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2160, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, lead: $('Attach CRM').item.json.email, tier: $('Attach CRM').item.json.tier, score: $('Attach CRM').item.json.score, crm_id: $('Attach CRM').item.json.crm_id, routed: $json.provider ?? $json.status ?? 'routed' }) }}",
+        "options": {}
+      },
+      "id": "a1111111-1111-1111-1111-111111111115",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2400, 300]
+    }
+  ],
+  "connections": {
+    "Lead Webhook": {
+      "main": [[{ "node": "Normalize Lead", "type": "main", "index": 0 }]]
+    },
+    "Normalize Lead": {
+      "main": [[{ "node": "AI Qualify (OpenAI mock)", "type": "main", "index": 0 }]]
+    },
+    "AI Qualify (OpenAI mock)": {
+      "main": [
+        [{ "node": "Parse AI Response", "type": "main", "index": 0 }],
+        [{ "node": "AI Qualify Fallback", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [[{ "node": "CRM Upsert (HubSpot mock)", "type": "main", "index": 0 }]]
+    },
+    "AI Qualify Fallback": {
+      "main": [[{ "node": "Map Fallback Result", "type": "main", "index": 0 }]]
+    },
+    "Map Fallback Result": {
+      "main": [[{ "node": "CRM Upsert (HubSpot mock)", "type": "main", "index": 0 }]]
+    },
+    "CRM Upsert (HubSpot mock)": {
+      "main": [[{ "node": "Attach CRM", "type": "main", "index": 0 }]]
+    },
+    "Attach CRM": {
+      "main": [[{ "node": "Google Sheets Append (mock)", "type": "main", "index": 0 }]]
+    },
+    "Google Sheets Append (mock)": {
+      "main": [[{ "node": "Route by Tier", "type": "main", "index": 0 }]]
+    },
+    "Route by Tier": {
+      "main": [
+        [{ "node": "WhatsApp Alert (mock)", "type": "main", "index": 0 }],
+        [{ "node": "Email Follow-up (mock)", "type": "main", "index": 0 }],
+        [{ "node": "Cold Lead Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "WhatsApp Alert (mock)": {
+      "main": [[{ "node": "Webhook Response", "type": "main", "index": 0 }]]
+    },
+    "Email Follow-up (mock)": {
+      "main": [[{ "node": "Webhook Response", "type": "main", "index": 0 }]]
+    },
+    "Cold Lead Log": {
+      "main": [[{ "node": "Webhook Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "active": false
+}
