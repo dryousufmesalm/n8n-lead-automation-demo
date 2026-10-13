@@ -1,0 +1,13 @@
+{
+  "name": "n8n-lead-demo-mock-services",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mock CRM, sheets, AI, WhatsApp, and email for n8n lead demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
